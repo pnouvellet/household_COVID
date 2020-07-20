@@ -1,0 +1,313 @@
+---
+title: "ccc"
+author: "Pierre Nouvellet"
+date: "2019-07"
+---
+
+```{r options, include = FALSE, message = FALSE, warning = FALSE, error = FALSE}
+set.seed(1)
+# runif(1,0,1)
+library(knitr)
+# library(EpiEstim)
+# library(Hmisc)
+library(deSolve)
+library(zoo)
+source('Rscript/functions_household3.R')
+
+opts_chunk$set(collapse = TRUE)
+
+opts_chunk$set(fig.path='figs/', fig.keep='high', 
+               dev=c('png'), fig.width=8, fig.height=8, cache=FALSE,
+               tidy=FALSE, warning=FALSE, fig.show="asis"
+ 	       )
+
+# useful functions
+sapply(paste0('Rscript/MCMC_household3/',(list.files('Rscript/MCMC_household3/'))),FUN = source)
+
+
+```
+
+
+NEED to do:
+1) input
+
+# Input
+
+```{r}
+               
+x0 <- c(8197,9609,4287,3881,1254,597)*1000
+
+S <- matrix(0,length(x0),300)
+I <- S
+S[,1] <- x0
+# flowerona
+
+d <- readRDS('../Rdata/data_2020-06-21.rds')
+D0 <- d$D_active_transmission$United_Kingdom 
+I0 <- d$I_active_transmission$United_Kingdom 
+dates <- as.Date(as.character(d$D_active_transmission$dates),format='%Y-%m-%d')
+f <- which(as.character(d$D_active_transmission$dates) %in% '2020-03-23')
+
+plot(dates, D0,
+     xlim=as.Date(c('2020-03-01','2020-06-30'),format='%Y-%m-%d'))
+abline(v=dates[which(as.character(d$D_active_transmission$dates) %in% '2020-03-16')],col='blue')
+abline(v=dates[which(as.character(d$D_active_transmission$dates) %in% '2020-03-23')],col='red')
+
+plot(dates, I0,
+     xlim=as.Date(c('2020-03-01','2020-06-30'),format='%Y-%m-%d'))
+abline(v=dates[which(as.character(d$D_active_transmission$dates) %in% '2020-03-16')],col='blue')
+abline(v=dates[which(as.character(d$D_active_transmission$dates) %in% '2020-03-23')],col='red')
+
+```
+
+
+```{r}
+
+## SI
+### 1. Estimating R_t with EpiEstim
+si_mean <- d$si_mean[2]
+si_std <- d$si_std[2]
+```
+
+# ODE model
+
+
+### check it's running ok
+
+### solve within
+
+```{r}
+# ----------- Solving the model
+D0_m <- c(rep(NA,3),zoo::rollmean(x=D0,k=7),rep(NA,3))
+
+death <- D0[which(D0>10)[1]:length(D0)]
+death_m <- D0_m[which(D0>10)[1]:length(D0)]
+dates_infer <- dates[which(D0>10)[1]:length(D0)]
+  
+nb_day <- length(death)
+add_days <- 20
+times  <- seq(1, nb_day+add_days  , by = 1)
+
+# input
+I0 <-10
+use_temp <- matrix(NA,nb_day+add_days,nb_day+add_days)
+for(i in 1:(nb_day+add_days)){
+  use_temp[i:(nb_day+add_days),i] <- seq(1,((nb_day+add_days)-i)+1,1)
+}
+
+# input <- list(   R0_w = 2,
+#                        delta = 1/3,  # rate for exposed period
+#                        sigma  = 1/ 5,  # rate for infectiousness individual
+#                        mu = 0.01,  # IFR
+#                        N1 = 1, N2 = 2, N3 = 3, N4 = 4, N5 = 5, N6 = 6,
+#                        I0 = I0*6,
+#                        Beta_b = seq(1,0.25,length.out = 2)/5, 
+#                        t_Btw_change = 30)
+#                        # Beta_b = seq(1,.1,length.out = nb_week)/5, 
+#                        #                       t_Btw_change = seq(7,nb_week*7-1,by = 7))
+n_weeks <- (nb_day+add_days)/7
+n_change <- n_weeks+1
+theta0 <- c(c(rep(.65,6),rep(.05,n_change-6)),   # reproduction numbers between
+            .5,                # reproduction within
+            I0 )         # peak of epidemic
+
+
+input <- list(   beta_w = theta0[n_change+1],
+                 delta = 1/4,  # rate for exposed period
+                 sigma  = 1/ 4.5,  # rate for infectiousness individual
+                 mu = 0.01,  # IFR
+                 hs = 1/(18.5 - 4.5 - 4),
+                 N_houshold = x0,
+                 I0 = theta0[n_change+2]*6,
+                 beta_b = theta0[1:n_change],
+                 t_Btw_change = c(1,seq(0,length(times), 
+                                    length.out = n_change)[-1]) )
+
+
+
+input <- list(   beta_w = .2,
+                 delta = 1/4,  # rate for exposed period
+                 sigma  = 1/ 4.5,  # rate for infectiousness individual
+                 mu = 0.01,  # IFR
+                 hs = 1/(18.5 - 4.5 - 4),
+                 N_houshold = x0,
+                 I0 = theta0[n_change+2]*6/10,
+                 beta_b = rep(2,n_change),
+                 t_Btw_change = c(1,seq(0,length(times), 
+                                    length.out = n_change)[-1]) )
+```
+
+```{r}
+# running within and between
+
+output <- run.syst(input,times,x0)
+
+```
+
+
+# basic output
+
+
+```{r}
+# x0*1000*c(1:6)
+# sum(x0*1000*c(1:6))
+# 
+# plot((rowSums(output$out_t[,1+((1:6)-1)*6+c(6)])))
+# 
+# plot(diff(rowSums(output$out_t[,1+((1:6)-1)*6+c(6)])))
+plot(death)
+lines(output$D_expect)
+lines(death_m,col='blue')
+```
+
+# MCMC
+
+```{r}
+
+theta0 <- c(theta0 ,10)         # last overdispersion
+
+#proposal variance
+sigma_prop <- rep(0.1,length(theta0))         # initial proposal variances (they are now tuned!)
+# priors
+prior <- rbind(matrix(c(0,1),nrow = n_change,2,byrow = TRUE),
+               t(c(0,5)),
+               t(c(0,10*1000)),
+               t(c(0,1e3))  )
+              
+
+# parameters
+rep <- 1e2
+```
+
+```{r,eval=FALSE}
+
+
+res <- MCMC_full(death = death,
+                 iter = rep,
+                 theta0 = theta0,
+                 s = sigma_prop,
+                 repli_adapt = 10,
+                 within_iter = rep/10)
+
+save.image(file = 'RData/household3.RData')
+```
+
+
+```{r}
+load('RData/household3.RData')
+Acc <- colSums(diff(res$theta)!=0)/rep          # acceptance rate (should be close to .2)
+Acc
+
+# plot traces
+plot(res$logL[,1])                                  # of likelihood
+layout(matrix(1:4,2,2,byrow = TRUE))
+for (i in 1:length(theta0)) {
+  # plot(res$theta[,N_geo+i])        # of initial conditions
+  plot(res$theta[,i],main = paste0(round(Acc[i]*100)) )        # of initial conditions
+}
+
+
+```
+
+```{r}
+
+
+par(oma=c(2,2,0,2), mar=c(1,4,1,4) + 0.1)
+
+layout(matrix(c(1,1,1,1,1,1,2,2,2),nrow = 3,ncol = 3,byrow = TRUE))
+
+date_axis <- as.Date(c('01/03/20','01/04/20','01/05/20','01/06/20'),format = '%d/%m/%y')
+
+t_sum <- apply(res$Traj,2,quantile,c(.5,.025,.975))
+
+# plot(diff(rowSums(output$out_t[,1+((1:6)-1)*6+c(6)])))
+plot(dates_infer, death, 
+     pch=16, bty='n',xlab = '',xaxt="n",
+     xlim = c(min(dates_infer)-add_days,max(dates_infer)) )
+
+axis(side = 1,at = date_axis, labels = rep('',length(date_axis)) )
+
+lines(dates_infer, death_m, col = 'blue3', lwd=3)
+
+lines(dates_infer, t_sum[1,], col = rgb(.8,0,0), lwd=3)
+polygon(c(dates_infer,rev(dates_infer)),
+          c(t_sum[2,],rev(t_sum[3,])),
+        col=rgb(.8,0,0,.5), border = NA)
+
+legend('topright', legend = c('observed','7-day moving average','predicted'),
+       lwd=c(NA,3,3), pch=c(16,NA,NA), col = c('black','blue2','red3'),bty = 'n')
+
+# beta
+beta_b_sum <- apply(res$theta[,1:n_change],2,quantile,c(.5,.025,.975))
+beta_w_sum <- quantile(res$theta[,n_change+1],c(.5,.025,.975))
+# period <- rep(1:n_change, diff( c(0,input$t_Btw_change,length(times)) ) )
+
+dates_infer2 <- seq(min(dates_infer)-add_days,max(dates_infer), by = 1)
+beta_b_sum2 <- apply(res$Rt,2,quantile,c(.5,.025,.975))
+beta_w_sum2 <- matrix(beta_w_sum,nrow = 3,ncol = length(dates_infer2))
+
+plot(dates_infer2, beta_w_sum2[1,],type='l',
+     ylim = c(0,1), col = 'blue3',bty = 'n',xlab = '',xaxt="n",ylab = 'beta')
+axis(side = 1,at = date_axis , labels = date_axis)
+
+lines(dates_infer2, beta_b_sum2[1,],type='l', col = 'red3')
+
+polygon(c(dates_infer2,rev(dates_infer2)),
+          c(beta_w_sum2[2,],rev(beta_w_sum2[3,])),
+        col=rgb(0,0,0.8,.5), border = NA)
+
+polygon(c(dates_infer2,rev(dates_infer2)),
+          c(beta_b_sum2[2,],rev(beta_b_sum2[3,])),
+        col=rgb(.8,0,0,.5), border = NA)
+
+legend('topleft', legend = c('within','between'),
+       lwd=c(3,3), pch=c(NA,NA), col = c('blue3','red3'),bty = 'n')
+
+#mobility
+inputs_m<- readRDS(file=paste0('../../../Documents/GitHub/Mobility/workstream_second/inputProcessing/Rdata/2020-05-10_inputs_SI_2.rds'))
+
+f <- which(names(inputs_m$D) %in% 'United_Kingdom')
+lines(inputs_m$D$dates,inputs_m$M[,f-1],lwd = 2, col = 'black')
+
+
+```
+
+```{r}
+
+beta_Ws <- res$theta[,n_change+1]
+n_size <- length(input$N_houshold)
+attack_rate2nd <- matrix(NA,length(beta_Ws),n_size-1)
+
+
+ for (i in 1:length(beta_Ws)){
+ 
+ pars_w <- list(
+    # parameters
+    delta    = input$delta,  # latency
+    sigma  = input$sigma,  # infection
+    beta    = beta_Ws[i],
+    mu = input$mu, #mortality
+    hs = input$hs,
+    N = seq(1,n_size, by = 1),
+    
+    # initial conditions
+    S0 = seq(1,n_size, by = 1) - 1,
+    E0 = rep(1,n_size),
+    I0 = rep(0,n_size),
+    Id0 = rep(0,n_size),
+    H0 = rep(0,n_size),
+    R0 = rep(0,n_size),
+    D0 = rep(0,n_size)
+  )
+  # for (i in 1:1e2){
+  mod <- within_m(user = pars_w)
+
+  out <- mod$run(times)
+
+  attack_rate2nd[i,] <-   ( ( out[length(times),1+5*n_size+c(2:n_size)] + 
+                              out[length(times),1+6*n_size+c(2:n_size)]) -1 ) / (c(2:n_size) -1)
+
+ }
+
+write.csv(file = 'att.csv',round(apply(attack_rate2nd,2,quantile,c(.5,.0275,.975)),digits = 2))
+```
